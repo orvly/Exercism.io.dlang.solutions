@@ -1,6 +1,6 @@
 module darts;
 
-uint score(const double x, const double y) {
+uint score(const double x, const double y) pure nothrow @nogc {
     import std.math: sqrt;
     auto radius = sqrt(x * x + y * y);
     if (radius <= 1)
