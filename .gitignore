@@ -25,6 +25,8 @@ docs/
 
 # VS stuff
 .vs/
+*.ilk
+*.pdb
 
 # Exercism stuff
 .exercism/
