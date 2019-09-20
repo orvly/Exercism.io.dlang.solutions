@@ -1,0 +1,3 @@
+name "perfect-numbers"
+buildRequirements "disallowDeprecations"
+dependency "dshould" version="*"
