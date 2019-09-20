@@ -3,7 +3,7 @@ module isogram;
 // This version is more concise but will take much longer
 // It also allocates memory unnnecessarily due to the call to array() below,
 // since group() and sort() don't work with a lazy collection.
-bool isIsogramFunctional(string s) pure {
+bool isIsogramFunctional(string s) pure @safe {
     import std.array: array;
     import std.ascii: isAlpha, toLower;
     import std.algorithm: sort, all, group, filter, map;
@@ -13,7 +13,7 @@ bool isIsogramFunctional(string s) pure {
 
 // This version is longer to write but takes less time since
 // it returns a result as soon as we find it's not an isogram.
-bool isIsogramIterative(string s) @nogc pure nothrow {
+bool isIsogramIterative(string s) @nogc @safe pure nothrow {
     import std.algorithm;
     import std.ascii;
     enum numLetters = ('z' - 'a') + 1;
