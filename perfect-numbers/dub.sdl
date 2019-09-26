@@ -1,3 +1,6 @@
 name "perfect-numbers"
 buildRequirements "disallowDeprecations"
 dependency "dshould" version="*"
+buildType "releaseWithTests" {
+	buildOptions "optimize" "debugInfo" "debugMode" "inline" "unittests"
+}

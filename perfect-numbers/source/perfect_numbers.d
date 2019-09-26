@@ -1,6 +1,10 @@
 module perfect_numbers;
 debug(2) import std.stdio;
 
+immutable int expOnly = 1;
+immutable int primeFactorsOnly = 1;
+immutable int everything = 1;
+
 enum Classification
 {
     DEFICIENT,
@@ -20,47 +24,75 @@ T[][] powerset(T)(T[] set) {
     return foldr( (T x, T[][] acc) => acc ~ acc.map!(accx => x ~ accx).array , [[]], set );
 }
 
-// knownFactors might include 1 and the number itself
-T[] allFactors(T)(T[] knownFactors, T n) {
+import std.typecons;
+import std.traits: isIntegral;
+alias IsExponentResult(T) = Tuple!(bool, "isExp", T, "base", T, "exponent");
+// If n = p^x, return (true, p, x).  
+// If n is not in the form p^x, including the case where n is prime, return (false, 0, 0)
+IsExponentResult!T isExponent(T)(in T n) if (isIntegral!T)
+{
+    // 16 -> 16^1/2, .. 16^1/4=0 ** , 16^1/5 < 2 stop
+    // 3  -> 3^1/2 <2 stop, 
+    // 6  -> 6^1/2, 6^1/3 < 2 stop
+    // 59 -> (prime) 59^1/2 ..., 59^1/7 < 2 stop
+
+    import std.math;
+    double rootBase = n;
+    double prevRootBase = n;
+    ulong  rootExp = 1;
+    ulong  prevExp = 1;
+    bool found = false;
+    while(rootBase > 2) {
+        rootExp += 1;
+        rootBase = pow(cast(double)n, cast(double)(1.0 / rootExp));
+        if(abs(trunc(rootBase) - rootBase) < 1e-20) {
+            found = true;
+            prevRootBase = rootBase; 
+            prevExp = rootExp;
+        }
+    }
+    return IsExponentResult!T(found,
+                              (found) ? cast(T)prevRootBase : 0, 
+                              (found) ? cast(T)prevExp : 0);
+}
+
+static if (expOnly) {
+unittest {
+    import dshould;
+    //debug(3) readf("\n");
+    isExponent(2).should.equal(IsExponentResult!int(false, 0, 0));
+    isExponent(16).should.equal(IsExponentResult!int(true, 2, 4));
+    isExponent(3).should.equal(IsExponentResult!int(false, 0, 0));
+    isExponent(4).should.equal(IsExponentResult!int(true, 2, 2));
+    isExponent(7).should.equal(IsExponentResult!int(false, 0, 0));
+    isExponent(67108864uL).should.equal(IsExponentResult!int(true, 2, 26));
+    isExponent(67108865uL).should.equal(IsExponentResult!int(false, 0, 0));
+    isExponent(67108863uL).should.equal(IsExponentResult!int(false, 0, 0));
+}
+}
+
+// Assuming factor divides n, find out the max exp where factor^exp divides n.
+T HighestExponent(T)(T factor, T n) if (isIntegral!T) {
+    import std.range;
     import std.algorithm;
-    import std.array;
-    import std.range;
-
-    return knownFactors
-        .filter!(g => g != 1 && g != n)
-        .array
-        .powerset[1..$] // Filter the first empty subset
-        // For each subset, multiply all its members
-        .map!(fold!((prev, x) => prev * x))
-        .chain([1, n])
-        .array.sort.uniq.array;
+    if (n == 2)
+        return 1;
+    // 16,  2 => 2^2, 2^3, 2^4, 2^5 XX
+    // i=factor..x until n%(factor^i) != 0
+    auto result = iota(2, n).until!(x => n % (factor ^^ x) != 0).tail(1);
+    return (result.empty) ? 1 : result.front;
 }
 
-
-class Set(T) {
-private: 
-    bool[T] _d; // bool is a dummy value type, we only care about the keys
-public:
-    bool opBinaryRight(string op)(T val) if (op == "in") {
-        return *(val in _d);
-    }
-    bool add(T val) {
-        auto exists = val in _d;
-        _d[val] = true;
-        return !exists;
-    }
-    bool remove(T val) {
-        return _d.remove(val);
-    }
-    T[] array() {
-        return _d.keys;
-    }
+static if (expOnly) {
+unittest {
+    import dshould;
+    HighestExponent(2, 2).should.equal(1);
+    HighestExponent(2, 16).should.equal(4);
+    HighestExponent(3, 2*2*2*3*3*3*3*3).should.equal(5);
+    // 201326592 = 2^26 * 3
+    HighestExponent(2, 201326592).should.equal(26);
+    HighestExponent(3, 201326592).should.equal(1);
 }
-T popBackVal(T)(T[] a) {
-    import std.range;
-    T last = a.back;
-    a.popBack();
-    return last;
 }
 // An helper method for using the partial results given by Pollard's rho algorithm to find out the 
 // rest of the factors of the number.
@@ -90,75 +122,126 @@ T popBackVal(T)(T[] a) {
 //         speeding up the factorization.
 // 3) Repeat step 1 on n.
 // 4) Stop when n is prime (i.e. Pollard's rho gives us no factors).
-T[] GetPrimeFactors(T)(T[] factorsToCheck, T n) {
+T[] GetPrimeFactors(T)(T n) {
     import std.math;
     import std.range;
+    import std.algorithm;
+    import std.typecons;
+
+    const originalN = n;
     T[] primeFactors;
-    Set!T knownFactors;
-    while(factorsToCheck.length > 0)
-    {
-        auto f = factorsToCheck.popBackVal;
-        if (f in knownFactors) {
-            continue;
-        }
-        // To find out if "f" is of the form p^x (where p is presumably a prime, since that's what Pollard's
-        // rho algorithm is supposed to give us):
-        // Calculate the roots f^(1/exp), exp=2..max , where: f^(1/max) is not a whole number
-        //double fReal = f;
-        double prev = f;
-        double next = f;
-        ulong rootExp = 1;
-        while(next > 1 && trunc(next) == next) {
-            rootExp += 1;
-            prev = next;
-            next = pow(f, 1.0 / rootExp);
-        }
-        if (next <= 1) {
-            // This factor is a composite of several prime exponents, not p^x, We need to decompose it further.
-            // Use Pollard's rho on it.
-            factorsToCheck ~= factor(f);
-        } else {
-            T primeFactor = cast(T)(prev);
-            // This factor is a prime or an exponent of a prime.
-            // Save this factor with full multiplicity in the known primeFactors, it will be used
-            // later to calculate combinations of all factors.
-            appender(&primeFactors) ~= primeFactor.repeat(rootExp - 1);
-            // Add it and all of its exponents to the list of known factors so we won't check them
-            // again if Pollar's rho gets them again.
-            T factorExp = primeFactor;
-            T prevFactorExp = primeFactor;
-            auto powerExp = 2;
-            while(n % factorExp == 0) {
-                knownFactors.add(factorExp);
-                prevFactorExp = factorExp;
-                factorExp = pow(primeFactor, powerExp);
-                powerExp += 1;
+    // Pollard's rho doesn't give very good results with even inputs, so first
+    // get rid of all factors that are powers of 2 (if any).
+    // See https://math.stackexchange.com/questions/2855796/bad-numbers-for-pollard-rho-algorithm
+    if (n % 2 == 0) {
+        auto highestExponent = HighestExponent(2, n);
+        appender(&primeFactors) ~= 2.repeat(highestExponent);
+        n /= 2 ^^ highestExponent;
+    }
+
+    while (n > 1) {
+        auto factorFromPollard = factorWithPollardsRho(n);
+
+        if (factorFromPollard.isNull) { // n is prime
+            if (n != originalN) {
+                primeFactors ~= n;
             }
-            n /= prevFactorExp;
-            factorsToCheck ~= n;
+            break;
+        }
+        else {
+            bool keepFactoringFactor = true;
+            while(keepFactoringFactor) {
+                auto f = factorFromPollard.get;
+                // To find out if "f" is of the form p^x (where p is presumably a prime, since that's what Pollard's
+                // rho algorithm is supposed to give us):
+                // Calculate the roots f^(1/exp), , where: exp=2..max , and f^(1/max) is not a whole number
+                auto isExponentResult = isExponent(f);
+
+                // The result of running isExponent on the factor f can be either (a, b, c are prime factors):
+                // a
+                // a*a*a*...
+                // a*a*b*c....
+                // 
+                // a*a*a* .. => We know for sure this is an exponent of a prime factor
+                // But we can't distinguish between a and a*a*b*c*...
+                // In that case, we send it to Pollard's. 
+                // If it finds no factors then it's a (that is, a is prime), then we can put it in the known factors 
+                // just once and divide n by it.
+                // If it does find factors then f is a*a*b*c.. 
+                if (isExponentResult.isExp) {
+                    auto highestExponent = HighestExponent(isExponentResult.base, n);
+                    appender(&primeFactors) ~= isExponentResult.base.repeat(highestExponent);
+                    n /= isExponentResult.base ^^ highestExponent;
+                    keepFactoringFactor = false;
+                } else {
+                    // It's either a prime factor, or a product of some combination of such.
+                    auto factorOfFactor = factorWithPollardsRho(f);
+                    if (factorOfFactor.isNull) {
+                        // f is prime, but is there f^x that is also a factor?
+                        auto highestExponent = HighestExponent(f, n);
+                        appender(&primeFactors) ~= f.repeat(highestExponent);
+                        n /= f ^^ highestExponent;
+                        keepFactoringFactor = false;
+                    } else {
+                        // It's a combinations of product of some primes, keep factoring it.
+                        factorFromPollard = factorOfFactor.get;
+                    }
+                }
+            }
         }
     }
     return primeFactors;
 }
 
+static if (primeFactorsOnly) {
+    unittest {
+        import dshould;
+        import std.stdio;
+        import std.algorithm;
+        import std.array;
+        import std.conv;
+        //debug(3) readf("\n");
+        GetPrimeFactors(2).should.equal([2]);
+
+        GetPrimeFactors(10).sort.should.equal([2, 5]);
+        GetPrimeFactors(8).sort.should.equal([2, 2, 2]);
+        GetPrimeFactors(15).sort.should.equal([3, 5]);
+        GetPrimeFactors(16).sort.should.equal([2, 2, 2, 2]);
+        GetPrimeFactors(2*2*2*3*3*3).sort.should.equal([2, 2, 2, 3, 3, 3]);
+        GetPrimeFactors(7).sort.should.equal(cast(int[])([]));
+        GetPrimeFactors(9973).sort.should.equal(cast(int[])([]));
+        GetPrimeFactors(9971).sort.should.equal([13, 13, 59]);
+
+        GetPrimeFactors(13*59*2677).sort.should.equal([13, 59, 2677]);
+        GetPrimeFactors(31*857*2153).sort.should.equal([31, 857, 2153]);
+        GetPrimeFactors(2*7*5843*9479).sort.should.equal([2, 7, 5843, 9479]);
+        GetPrimeFactors(33_550_336uL).sort.should.equal([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 8191]);
+        GetPrimeFactors(2*3*3*3*5*5*7*7*7*17).sort.should.equal([2,3,3,3,5,5,7,7,7,17]);
+        GetPrimeFactors(19267uL*17291uL*17291uL).sort.should.equal([17291uL,17291uL,19267uL]);
+    }
+}
+
+import std.typecons: Nullable, nullable;
 // https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm
-T[] factor(T)(T n) {
+Nullable!T factorWithPollardsRho(T)(T n) {
     import std.numeric: gcd;
     import std.math: abs, pow;
-    import std.algorithm: map, fold, sort, uniq;
-    import std.range: chain;
-    import std.array: array;
+    import std.algorithm: canFind;
 
-    Set!T factorsSet;
-    T[] factors = [1, n];
-    auto g = (T x) => (x*x + 1) % n; // Polynomial used
-    // Experimental evidence: I needed at most n^1/3 iterations to find all factors
-    // using the naive Pollard Rho method below.
+    // Polynomial for Pollard's rho, see Wikipedia article above.
+    auto g = (T x) => (x*x + 1) % n;
+    // I'm using n^1/3 as an upper bound, slightly larger than the heuristic, which is n^1/4.
+    // Running some iterations I saw that this increased the odds of finding at least 2 factors.
+    // According to wikipedia: 
+    // If the pseudorandom number x = g ( x ) occurring in the Pollard ρ algorithm were an actual random number, 
+    // it would follow that success would be achieved half the time, by the Birthday paradox in 
+    // O ( p ) ≤ O ( n ^ 1/4 ) iterations. 
+    // It is believed that the same analysis applies as well to the actual rho algorithm, but 
+    // this is a heuristic claim, and rigorous analysis of the algorithm remains open.
     const uint maxIterationsWithoutNewFactor = cast(uint)pow(n, 1.0/3);
     uint maxCycles = 2;
     uint noNewFactorIteration = 0;
     T x0 = 2, y0 = 2, d0 = 1;
-    debug(3) readf("\n");
     while(noNewFactorIteration < maxIterationsWithoutNewFactor) {
         auto x = x0, y = y0, d = d0;
         uint cycles = 0;
@@ -167,66 +250,39 @@ T[] factor(T)(T n) {
             y = g(g(y));
             d = gcd(abs(x - y), n);
         }
-        auto foundFactor = d != n;
-        auto foundNewFactor = false;
+        auto foundFactor = d != n && d != 1;
         if (foundFactor) {
-            foundNewFactor = factorsSet.add(d);
+            return nullable(d);
         }
-        debug(2) if (foundNewFactor) writeln(n, ' ', d, ' ', foundFactor, ' ', foundNewFactor, ' ', factors, ' ', cycles, ' ', x0, ' ', y0, ' ', maxCycles, ' ', noNewFactorIteration);
-        if (!foundFactor || !foundNewFactor) {
+        //debug(2) if (foundNewFactor) writeln(n, ' ', d, ' ', foundFactor, ' ', foundNewFactor, ' ', factors, ' ', cycles, ' ', x0, ' ', y0, ' ', maxCycles, ' ', noNewFactorIteration);
+
+        if (!foundFactor) {
             noNewFactorIteration += 1;
             maxCycles = noNewFactorIteration % 100 + 2;
         }
-        // 2 possible cases here:
-        // 1) If d == n then it's a failure and we need to restart with other values
-        // 2) If d != n then we (possibly) found a factor, and we need to look for other factor.
+        // It's a failure and we need to restart with other values
+        // Picking new starting x0 here was done heuristically, I played around and saw that this 
+        // increased the odds of finding a factor sooner.
         x0 = (y0 + noNewFactorIteration) % n;
         y0 = x0;
     }
-    auto primeFactorsWithMultiplicity = GetPrimeFactors(factorsSet.array, n);
-    auto allFactors = primeFactorsWithMultiplicity
-        .powerset[1..$] // Filter the first empty subset
-        .map!(fold!((prev, x) => prev * x)) // For each subset, multiply all its members
-        .chain([1, n]) // Add 1 and n
-        .array.sort.uniq.array;
-    return allFactors;
+    return Nullable!T();
 }
 
-immutable int factorOnly = 1;
-immutable int everything = 0;
-
-static if (factorOnly)
-{
-    unittest {
-        import dshould;
-        import std.algorithm;
-        
-
-        // Take all found factors
-        // Keep the lowest ones
-        // In case of 2_053_259:  13, 59, 767
-        // Divide n by each one
-
-        //factor(2).sort.should.equal([1, 2]);
-        factor(15).sort.should.equal([1, 3, 5, 15]);
-        //factor(2048).sort.should.equal(allFactors([1, 2,2,2,2,2,2,2,2,2,2,2, 2048], 2048));
-        //factor(8051).sort.should.equal([1, 83, 97, 8051]);
-        //factor(8257).sort.should.equal([1, 23, 359, 8257]);
-        //factor(7).sort.should.equal([1, 7]);
-        //factor(9973).sort.should.equal([1, 9973]);
-        //factor(9971).sort.should.equal(allFactors([1, 13, 13, 59, 9971], 9971));
-        //factor(2_053_259).sort.should.equal(allFactors([1, 13, 59, 2677, 2053259], 2053259));
-        //factor(57198751).sort.should.equal(allFactors([1, 31, 857, 2153, 57198751], 57198751));
-        //factor(775_401_158).sort.should.equal(allFactors([1, 2, 7, 5843, 9479, 775_401_158], 775_401_158));
-        //factor(33_550_336uL).sort.should.equal(allFactors([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 8191], 33550336));
-    }
-}
-
-Classification classify(ulong n) {
+Classification classify(T)(T n) {
     import std.algorithm;
     import std.range;
+    import std.exception;
+    //debug(3) readf("\n");
+    enforce(n > 0, "n must be a natural number");
 
-    auto sum = factor(n).filter!(x => x < n).sum;
+    auto primeFactors = GetPrimeFactors(n);
+    auto allFactors = primeFactors.powerset[1..$] // Filter the first empty subset
+        .map!(fold!((prev, x) => prev * x)) // For each subset, multiply all its members
+        .chain([1]) // Add 1 
+        .array.sort.uniq.array;
+
+    auto sum = allFactors.filter!(x => x < n).sum;
     with(Classification) {
         if (sum == n)
             return PERFECT;
@@ -243,16 +299,13 @@ unittest
 
     immutable int allTestsEnabled = 1;
 
-    debug(2) writeln("START");
     // Perfect numbers
 
     // Smallest perfect number is classified correctly
     assert(classify(6) == Classification.PERFECT);
-    debug(2) writeln("TEST 2");
 
     // Medium perfect number is classified correctly
     assert(classify(28) == Classification.PERFECT);
-    debug(2) writeln("TEST 3");
 
     // Large perfect number is classified correctly
     assert(classify(33_550_336) == Classification.PERFECT);
