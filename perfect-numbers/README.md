@@ -17,39 +17,18 @@ The Greek mathematician [Nicomachus](https://en.wikipedia.org/wiki/Nicomachus) d
 
 Implement a way to determine whether a given number is **perfect**. Depending on your language track, you may also need to implement a way to determine whether a given number is **abundant** or **deficient**.
 
-## Getting Started
+Notes on my solution
+====================
+Instead of using the naive method of finding prime factors, I've read about factorizations methods a bit, and decided to use Pollard's rho method, which is a semi-probabilistic method of factoring an integer, which implementation is fairly simple.
 
-Make sure you have read [D page](http://exercism.io/languages/d) on
-exercism.io.  This covers the basic information on setting up the development
-environment expected by the exercises.
+But I've had various problems with this, including:
 
-## Passing the Tests
+* Assuming at first that I could find all factors only using with Pollard's rho (for which it's totally inadequate), and then thinking I could find some factors with it. At the end I settled on finding a single factor.
 
-Get the first test compiling, linking and passing by following the [three
-rules of test-driven development](http://butunclebob.com/ArticleS.UncleBob.TheThreeRulesOfTdd).
-Create just enough structure by declaring namespaces, functions, classes,
-etc., to satisfy any compiler errors and get the test to fail.  Then write
-just enough code to get the test to pass.  Once you've done that,
-uncomment the next test by moving the following line past the next test.
+* I had assumed this factor would always be prime, but it isn't necessarily, so I wrote an algorithm that given this initial factor, finds the rest of the prime factors of the original number.
 
-```D
-static if (all_tests_enabled)
-```
+* Given all those prime factors, I was still stumped as to how to find all factors. I finally understood that the correct way is building a power set from the set of prime factors, and then taking the product of each sub-set of the power set.
 
-This may result in compile errors as new constructs may be invoked that
-you haven't yet declared or defined.  Again, fix the compile errors minimally
-to get a failing test, then change the code minimally to pass the test,
-refactor your implementation for readability and expressiveness and then
-go on to the next test.
+* As an exercise, I took the Haskell implementation of a power set from the Rosetta Code page of this algorithm, and translated it to D.  Implementing foldr was difficult since the Haskell version doesn't explicitly state that the types of the seed and the range are different, and I was confused by the D compiler errors at first until I finally grasped this and changed foldr to have 2 template parameters, which was very obvious in hindsight...
 
-Try to use standard D facilities in preference to writing your own
-low-level algorithms or facilities by hand.  [DRefLanguage](https://dlang.org/spec/spec.html)
-and [DReference](https://dlang.org/phobos/index.html) are references to the D language and D standard library.
-
-
-## Source
-
-Taken from Chapter 2 of Functional Thinking by Neal Ford. [http://shop.oreilly.com/product/0636920029687.do](http://shop.oreilly.com/product/0636920029687.do)
-
-## Submitting Incomplete Solutions
-It's possible to submit an incomplete solution so you can see how others have completed the exercise.
+* I found the built-in assert lacking, specifically it only shows the line number, not what assert failed. I settled on using the dshould package which displays assert failures in a much nicer way.  However I've kept the original unit tests code using the regular assert, as to not force anyone who uses this code to use dshould.

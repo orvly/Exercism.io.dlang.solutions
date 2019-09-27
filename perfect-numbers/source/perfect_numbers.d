@@ -1,26 +1,28 @@
 module perfect_numbers;
 debug(2) import std.stdio;
 
-immutable int expOnly = 1;
-immutable int primeFactorsOnly = 1;
-immutable int everything = 1;
+immutable int expOnly = 0;
+immutable int primeFactorsOnly = 0;
+immutable int justPerfectNumbers = 1;
 
-enum Classification
-{
-    DEFICIENT,
-    PERFECT,
-    ABUNDANT
-}
-
+// Power set implementation: 
+// I copied Haskell's implementation of a power set and tried to implement it in D.
+// I also added this to Rosetta Code section on D's implementation of the algorithm.
+// D doesn't have foldr, so I copied its (naive) implementation from Haskell
+//
+// Haskell code:
 // foldr f z []     = z
 // foldr f z (x:xs) = x `f` foldr f z xs
 S foldr(T, S)(S function(T, S) f, S z, T[] rest) {
     return (rest.length == 0) ? z : f(rest[0], foldr(f, z, rest[1..$]));
 }
+// Haskell code:
 //powerSet = foldr (\x acc -> acc ++ map (x:) acc) [[]]
 T[][] powerset(T)(T[] set) {
     import std.algorithm;
     import std.array;
+    // The types for x and acc in the lambda below aren't actually needed, but I felt
+    // it makes the code a bit clearer.
     return foldr( (T x, T[][] acc) => acc ~ acc.map!(accx => x ~ accx).array , [[]], set );
 }
 
@@ -59,7 +61,6 @@ IsExponentResult!T isExponent(T)(in T n) if (isIntegral!T)
 static if (expOnly) {
 unittest {
     import dshould;
-    //debug(3) readf("\n");
     isExponent(2).should.equal(IsExponentResult!int(false, 0, 0));
     isExponent(16).should.equal(IsExponentResult!int(true, 2, 4));
     isExponent(3).should.equal(IsExponentResult!int(false, 0, 0));
@@ -77,7 +78,6 @@ T HighestExponent(T)(T factor, T n) if (isIntegral!T) {
     import std.algorithm;
     if (n == 2)
         return 1;
-    // 16,  2 => 2^2, 2^3, 2^4, 2^5 XX
     // i=factor..x until n%(factor^i) != 0
     auto result = iota(2, n).until!(x => n % (factor ^^ x) != 0).tail(1);
     return (result.empty) ? 1 : result.front;
@@ -94,144 +94,22 @@ unittest {
     HighestExponent(3, 201326592).should.equal(1);
 }
 }
-// An helper method for using the partial results given by Pollard's rho algorithm to find out the 
-// rest of the factors of the number.
-//
-// After running Pollard's rho, we have a list of semi-random factors, at least 1, 
-// and not necessarily prime, from which we should build the full list.
-// The surest way is to use these known factors to build the list of only prime factors,
-// and then use the power set of this list to build the full list of factors.
-//
-// Say the number n decomposes into the following prime factors:
-// n = a^6 * b^3 * c * d
-// and say that in from Pollard's rho algorithm we only found the factor: 
-// f0 = a^5*b^2
-// from which we should obtain the rest of them.
-// 1) Take successively the i-th root of f0 until we get just a, or <1.
-//    1.1) If e.g. f0 = a^5*b^2, then we won't get any root, then it's not a prime factor power, 
-//         and we should decompose it further:
-//         Run Pollard's rho algorithm on this number, and repeat step (1) on the factor we find.
-//    1.2) If e.g. f0 = a^5, then we do get a root. Raise f0 by this root until we get 
-//         the highest factor of n. 
-//         Also keep f0's root and its multiplicity.
-//    1.3) NOTE: Pollard's rho may give us several factors, in which case we can speed up the
-//         factorization by repeating (1) on each factor before moving to step (2)
-// 2) If we found a prime factor, say a, where a^6 is the highest exponent:
-//    Divide n by this:  n = n / a^6  (== b^3 * c * d, but we don't know it yet).
-//    2.1) If at step (1) we found several factors from Pollard's rho, divide n by their product,
-//         speeding up the factorization.
-// 3) Repeat step 1 on n.
-// 4) Stop when n is prime (i.e. Pollard's rho gives us no factors).
-T[] GetPrimeFactors(T)(T n) {
-    import std.math;
-    import std.range;
-    import std.algorithm;
-    import std.typecons;
 
-    const originalN = n;
-    T[] primeFactors;
-    // Pollard's rho doesn't give very good results with even inputs, so first
-    // get rid of all factors that are powers of 2 (if any).
-    // See https://math.stackexchange.com/questions/2855796/bad-numbers-for-pollard-rho-algorithm
-    if (n % 2 == 0) {
-        auto highestExponent = HighestExponent(2, n);
-        appender(&primeFactors) ~= 2.repeat(highestExponent);
-        n /= 2 ^^ highestExponent;
-    }
-
-    while (n > 1) {
-        auto factorFromPollard = factorWithPollardsRho(n);
-
-        if (factorFromPollard.isNull) { // n is prime
-            if (n != originalN) {
-                primeFactors ~= n;
-            }
-            break;
-        }
-        else {
-            bool keepFactoringFactor = true;
-            while(keepFactoringFactor) {
-                auto f = factorFromPollard.get;
-                // To find out if "f" is of the form p^x (where p is presumably a prime, since that's what Pollard's
-                // rho algorithm is supposed to give us):
-                // Calculate the roots f^(1/exp), , where: exp=2..max , and f^(1/max) is not a whole number
-                auto isExponentResult = isExponent(f);
-
-                // The result of running isExponent on the factor f can be either (a, b, c are prime factors):
-                // a
-                // a*a*a*...
-                // a*a*b*c....
-                // 
-                // a*a*a* .. => We know for sure this is an exponent of a prime factor
-                // But we can't distinguish between a and a*a*b*c*...
-                // In that case, we send it to Pollard's. 
-                // If it finds no factors then it's a (that is, a is prime), then we can put it in the known factors 
-                // just once and divide n by it.
-                // If it does find factors then f is a*a*b*c.. 
-                if (isExponentResult.isExp) {
-                    auto highestExponent = HighestExponent(isExponentResult.base, n);
-                    appender(&primeFactors) ~= isExponentResult.base.repeat(highestExponent);
-                    n /= isExponentResult.base ^^ highestExponent;
-                    keepFactoringFactor = false;
-                } else {
-                    // It's either a prime factor, or a product of some combination of such.
-                    auto factorOfFactor = factorWithPollardsRho(f);
-                    if (factorOfFactor.isNull) {
-                        // f is prime, but is there f^x that is also a factor?
-                        auto highestExponent = HighestExponent(f, n);
-                        appender(&primeFactors) ~= f.repeat(highestExponent);
-                        n /= f ^^ highestExponent;
-                        keepFactoringFactor = false;
-                    } else {
-                        // It's a combinations of product of some primes, keep factoring it.
-                        factorFromPollard = factorOfFactor.get;
-                    }
-                }
-            }
-        }
-    }
-    return primeFactors;
-}
-
-static if (primeFactorsOnly) {
-    unittest {
-        import dshould;
-        import std.stdio;
-        import std.algorithm;
-        import std.array;
-        import std.conv;
-        //debug(3) readf("\n");
-        GetPrimeFactors(2).should.equal([2]);
-
-        GetPrimeFactors(10).sort.should.equal([2, 5]);
-        GetPrimeFactors(8).sort.should.equal([2, 2, 2]);
-        GetPrimeFactors(15).sort.should.equal([3, 5]);
-        GetPrimeFactors(16).sort.should.equal([2, 2, 2, 2]);
-        GetPrimeFactors(2*2*2*3*3*3).sort.should.equal([2, 2, 2, 3, 3, 3]);
-        GetPrimeFactors(7).sort.should.equal(cast(int[])([]));
-        GetPrimeFactors(9973).sort.should.equal(cast(int[])([]));
-        GetPrimeFactors(9971).sort.should.equal([13, 13, 59]);
-
-        GetPrimeFactors(13*59*2677).sort.should.equal([13, 59, 2677]);
-        GetPrimeFactors(31*857*2153).sort.should.equal([31, 857, 2153]);
-        GetPrimeFactors(2*7*5843*9479).sort.should.equal([2, 7, 5843, 9479]);
-        GetPrimeFactors(33_550_336uL).sort.should.equal([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 8191]);
-        GetPrimeFactors(2*3*3*3*5*5*7*7*7*17).sort.should.equal([2,3,3,3,5,5,7,7,7,17]);
-        GetPrimeFactors(19267uL*17291uL*17291uL).sort.should.equal([17291uL,17291uL,19267uL]);
-    }
-}
-
-import std.typecons: Nullable, nullable;
+// Given n, find a factor of it using the Pollard's rho semi-probabilistic algorithm.
+// If Pollard's rho doesn't find a factor, an empty Nullable will be returned.
+// Note that the factor returned by this method may not be prime.
 // https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm
-Nullable!T factorWithPollardsRho(T)(T n) {
+import std.typecons: Nullable;
+Nullable!T factorWithPollardsRho(T)(T n) if (isIntegral!T) {
     import std.numeric: gcd;
     import std.math: abs, pow;
     import std.algorithm: canFind;
+    import std.typecons: nullable;
 
     // Polynomial for Pollard's rho, see Wikipedia article above.
     auto g = (T x) => (x*x + 1) % n;
     // I'm using n^1/3 as an upper bound, slightly larger than the heuristic, which is n^1/4.
-    // Running some iterations I saw that this increased the odds of finding at least 2 factors.
+    // Running some iterations I saw that this increased the odds of finding a factor.
     // According to wikipedia: 
     // If the pseudorandom number x = g ( x ) occurring in the Pollard ρ algorithm were an actual random number, 
     // it would follow that success would be achieved half the time, by the Birthday paradox in 
@@ -242,6 +120,9 @@ Nullable!T factorWithPollardsRho(T)(T n) {
     uint maxCycles = 2;
     uint noNewFactorIteration = 0;
     T x0 = 2, y0 = 2, d0 = 1;
+
+    // NOTE: This could be made much faster: it doesn't use Brent's variant of the algorithm
+    // (see wikipedia article referneced above)
     while(noNewFactorIteration < maxIterationsWithoutNewFactor) {
         auto x = x0, y = y0, d = d0;
         uint cycles = 0;
@@ -269,14 +150,156 @@ Nullable!T factorWithPollardsRho(T)(T n) {
     return Nullable!T();
 }
 
+// Given a number n, returns a all its prime factors, with multiplicity.
+// If n is prime, an empty list will be returned.
+// If n has a prime factor that divides it, return this factor in the list in the number
+// of times it divides n.
+T[] getPrimeFactors(T)(T n) {
+    import std.math;
+    import std.range;
+    import std.algorithm;
+    import std.typecons;
+
+    const originalN = n;
+    T[] primeFactors;
+    // Pollard's rho doesn't give very good results with even inputs, so first
+    // get rid of all factors that are powers of 2 (if any).
+    // See https://math.stackexchange.com/questions/2855796/bad-numbers-for-pollard-rho-algorithm
+    if (n % 2 == 0) {
+        auto highestExponent = HighestExponent(2, n);
+        appender(&primeFactors) ~= 2.repeat(highestExponent);
+        n /= 2 ^^ highestExponent;
+    }
+
+    // After running Pollard's rho, we have a factor of n.
+    // This factor is not necessarily prime, but we can use it to get the full factor list.
+    // Say the number n decomposes into the following prime factors:
+    // n = a^6 * b^3 * c * d
+    // (It always should, see Fundamental theorem of arithmetic, https://en.wikipedia.org/wiki/Fundamental_theorem_of_arithmetic)
+    // Since Pollard's rho is probabilistic, it can give us a factor of the following forms:
+    // (1) f = a^3
+    // OR
+    // (2) f = a
+    // OR
+    // (3) f = a^5*b^2
+    // To get the rest of them, we should find out which case it is.
+    // 1) If it's (1), that is, f=p^x, we can discover this by taking the i-th root of f until we get 
+    //    1 or p itself. This is done by the function isExponent.
+    //    This is (roughly) O(log(n)) operation, much faster than using Pollard's rho.
+    //    After we've found p, we should check what is the highest exponent it divides n by.
+    //    In the example above:   we got f=a^3, but we want to find a^6.
+    //    This is done with HighestExponent.
+    //    Then we add x times the prime factor p to the list of factors.
+    //    Then we divide n by this number with the highest exponent to get rid of it completely.
+    // 
+    // 2) If it's (2), that is, f = p , we can discover this by running Pollard's rho on f. If it finds
+    //    no factors then f is prime (with a high degree of probability...).
+    //    In this case we again want to find what is the highest exponent it divides n by.
+    //    In the example above:   we got f=a, but we want to find a^6.
+    //    This is also done with HighestExponent.
+    //    Then we add x times the prime factor p to the list of factors.
+    //    Then we divide n by this number with the highest exponent to get rid of it completely.
+    //
+    // 3) If it's (3), that is, f is a a product of some factors raised by some exponents,
+    //    we discover by running Pollard's rho on f and it finds some factors.
+    //    In this case, keep calling Pollard's rho on f until it gives us a sub-factor of it,
+    //    that is case (1) or case (2).
+    // 
+    // Stop conditions: 
+    // Since we divide n by its prime factor with multiplicity every step, we stop when we get to 1,
+    // or when we get n which is prime.
+
+    while (n > 1) {
+        auto factorFromPollard = factorWithPollardsRho(n);
+
+        if (factorFromPollard.isNull) { // n is prime
+            if (n != originalN) { // If this is the original n, then n itself is prime, we shouldn't add it to the results.
+                primeFactors ~= n;
+            }
+            break;
+        }
+        else {
+            bool keepFactoringFactor = true;
+            // Keep calling Pollard's rho on f until we get f=p^x or f=p (where p is prime)
+            while(keepFactoringFactor) { 
+                auto f = factorFromPollard.get;
+                // To find out if "f" is of the form p^x (where p is presumably a prime, since that's what Pollard's
+                // rho algorithm is supposed to give us):
+                // Calculate the roots f^(1/exp), , where: exp=2..max , and f^(1/max) is not a whole number
+                auto isExponentResult = isExponent(f);
+
+                if (isExponentResult.isExp) {
+                    // Case (1) from above - f = p^x
+                    auto highestExponent = HighestExponent(isExponentResult.base, n);
+                    appender(&primeFactors) ~= isExponentResult.base.repeat(highestExponent);
+                    n /= isExponentResult.base ^^ highestExponent;
+                    keepFactoringFactor = false;
+                } else {
+                    // It's either a prime factor, or a product of some combination of such.
+                    // Find out by running Pollard's rho again on it.
+                    auto factorOfFactor = factorWithPollardsRho(f);
+                    if (factorOfFactor.isNull) {
+                        // Case (2) above.
+                        // f is prime, but is there f^x that is also a factor?
+                        auto highestExponent = HighestExponent(f, n);
+                        appender(&primeFactors) ~= f.repeat(highestExponent);
+                        n /= f ^^ highestExponent;
+                        keepFactoringFactor = false;
+                    } else {
+                        // Case (3) above.
+                        // It's a combinations of product of some primes, keep factoring it.
+                        factorFromPollard = factorOfFactor.get;
+                    }
+                }
+            }
+        }
+    }
+    return primeFactors;
+}
+
+static if (primeFactorsOnly) {
+    unittest {
+        import dshould;
+        import std.stdio;
+        import std.algorithm;
+        import std.array;
+        import std.conv;
+        //debug(3) readf("\n");
+        getPrimeFactors(2).should.equal([2]);
+        
+        getPrimeFactors(10).sort.should.equal([2, 5]);
+        getPrimeFactors(8).sort.should.equal([2, 2, 2]);
+        getPrimeFactors(15).sort.should.equal([3, 5]);
+        getPrimeFactors(16).sort.should.equal([2, 2, 2, 2]);
+        getPrimeFactors(2*2*2*3*3*3).sort.should.equal([2, 2, 2, 3, 3, 3]);
+        getPrimeFactors(7).sort.should.equal(cast(int[])([]));
+        getPrimeFactors(9973).sort.should.equal(cast(int[])([]));
+        getPrimeFactors(9971).sort.should.equal([13, 13, 59]);
+        
+        getPrimeFactors(13*59*2677).sort.should.equal([13, 59, 2677]);
+        getPrimeFactors(31*857*2153).sort.should.equal([31, 857, 2153]);
+        getPrimeFactors(2*7*5843*9479).sort.should.equal([2, 7, 5843, 9479]);
+        getPrimeFactors(33_550_336uL).sort.should.equal([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 8191]);
+        getPrimeFactors(2*3*3*3*5*5*7*7*7*17).sort.should.equal([2,3,3,3,5,5,7,7,7,17]);
+        getPrimeFactors(19267uL*17291uL*17291uL).sort.should.equal([17291uL,17291uL,19267uL]);
+    }
+}
+
+
+enum Classification
+{
+    DEFICIENT,
+    PERFECT,
+    ABUNDANT
+}
+
 Classification classify(T)(T n) {
     import std.algorithm;
     import std.range;
     import std.exception;
-    //debug(3) readf("\n");
     enforce(n > 0, "n must be a natural number");
 
-    auto primeFactors = GetPrimeFactors(n);
+    auto primeFactors = getPrimeFactors(n);
     auto allFactors = primeFactors.powerset[1..$] // Filter the first empty subset
         .map!(fold!((prev, x) => prev * x)) // For each subset, multiply all its members
         .chain([1]) // Add 1 
@@ -292,7 +315,7 @@ Classification classify(T)(T n) {
     }
 }
 
-static if (everything) {
+static if (justPerfectNumbers) {
 unittest
 {
     import std.exception : assertThrown;
