@@ -1,4 +1,4 @@
 name "nth-prime"
 buildRequirements "disallowDeprecations"
 dflags "-O2" platform="ldc2" 
-dflags "-O2" "-static" "-release" platform="ldc" 
+dflags "-O2" "-static" platform="ldc" 
