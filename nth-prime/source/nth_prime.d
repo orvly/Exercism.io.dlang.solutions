@@ -1,19 +1,15 @@
 module nth_prime;
 
-import std.bigint;
-
 ulong prime(ulong nth) {
     // Method: Sieve of Erastothenes.
 
     import std.container.array: Array;
-    import std.range: iota, back, drop;
+    import std.range: iota, drop;
     import std.algorithm: each, countUntil;
     import std.exception: enforce;
     import std.math: log, ceil;
     import std.conv: to;
 
-    debug(3) import std.stdio;
-    debug(3) readf("\n");
     enforce(nth > 0, "illegal input");
 
     auto isPrime = Array!bool();
