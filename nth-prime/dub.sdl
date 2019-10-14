@@ -1,4 +1,5 @@
 name "nth-prime"
+dependency "vibe-d" version="~>0.8.6"
+dflags "-O2" platform="ldc2"
+dflags "-O2" "-static" platform="ldc"
 buildRequirements "disallowDeprecations"
-dflags "-O2" platform="ldc2" 
-dflags "-O2" "-static" platform="ldc" 
